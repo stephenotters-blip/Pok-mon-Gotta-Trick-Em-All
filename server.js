@@ -138,16 +138,17 @@ io.on('connection', (socket)=>{
     broadcastLobby(room);
   });
 
-  socket.on('startGame', ({consolationRule, fillWithBots})=>{
+  socket.on('startGame', ({consolationRule, fillWithBots, totalPlayers})=>{
     const room = rooms[socket.data.roomCode];
     if(!room || room.started) return;
     if(room.players.length < 2 && !fillWithBots) return socket.emit('errorMsg', 'Need at least 2 players to start (or fill empty seats with bots).');
     room.started = true;
     const gamePlayers = room.players.map(p=>({id:p.id, name:p.name, isBot:false}));
     if(fillWithBots){
+      const target = Math.max(gamePlayers.length, Math.min(4, parseInt(totalPlayers) || 4));
       const botNames = ['Bot 1','Bot 2','Bot 3','Bot 4'];
       let n = 0;
-      while(gamePlayers.length < 4){
+      while(gamePlayers.length < target){
         const id = G.makeId();
         gamePlayers.push({id, name: botNames[n++], isBot:true});
         room.players.push({id, socketId:null, name: botNames[n-1], connected:true, isBot:true});
