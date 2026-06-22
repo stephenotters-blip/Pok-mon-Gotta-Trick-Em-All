@@ -227,12 +227,12 @@ function renderLobby(){
     panel.appendChild(botToggleRow);
   }
 
-  const canStart = lobbyInfo && lobbyInfo.players.length >= 2 && !lobbyInfo.started;
+  const canStart = lobbyInfo && (lobbyInfo.players.length >= 2 || fillWithBotsEnabled) && !lobbyInfo.started;
   panel.appendChild(h('div', {class:'row', style:'margin-top:18px;'}, [
     h('button', {class: canStart ? 'gold' : 'secondary', onClick: ()=>{
       if(!canStart) return;
       socket.emit('startGame', {consolationRule: consolationRuleEnabled, fillWithBots: fillWithBotsEnabled});
-    }}, canStart ? 'Start Game' : 'Waiting for players (need 2+)...')
+    }}, canStart ? 'Start Game' : 'Waiting for players (need 2+, or fill with bots)...')
   ]));
 
   wrap.appendChild(panel);
