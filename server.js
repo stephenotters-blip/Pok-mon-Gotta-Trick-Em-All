@@ -138,6 +138,19 @@ io.on('connection', (socket)=>{
     broadcastLobby(room);
   });
 
+  socket.on('rematch', ({consolationRule})=>{
+    const room = rooms[socket.data.roomCode];
+    if(!room || !room.state) return;
+    if(room.state.phase !== 'gameOver') return; // only allowed once a game has actually ended
+    // Reuse the exact same seated players (humans + any bots) from the
+    // previous game, just with a freshly shuffled deck/state.
+    const gamePlayers = room.players.map(p=>({id:p.id, name:p.name, isBot:!!p.isBot}));
+    room.state = G.initGameState(gamePlayers, { consolationRule: consolationRule != null ? !!consolationRule : room.state.consolationRule });
+    G.revealNextPokemon(room.state);
+    broadcastState(room);
+    maybeRunBot(room);
+  });
+
   socket.on('startGame', ({consolationRule, fillWithBots, totalPlayers})=>{
     const room = rooms[socket.data.roomCode];
     if(!room || room.started) return;
