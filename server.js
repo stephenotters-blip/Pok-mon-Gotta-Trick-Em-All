@@ -141,7 +141,7 @@ io.on('connection', (socket)=>{
   socket.on('startGame', ({consolationRule, fillWithBots})=>{
     const room = rooms[socket.data.roomCode];
     if(!room || room.started) return;
-    if(room.players.length < 2) return socket.emit('errorMsg', 'Need at least 2 players to start.');
+    if(room.players.length < 2 && !fillWithBots) return socket.emit('errorMsg', 'Need at least 2 players to start (or fill empty seats with bots).');
     room.started = true;
     const gamePlayers = room.players.map(p=>({id:p.id, name:p.name, isBot:false}));
     if(fillWithBots){
