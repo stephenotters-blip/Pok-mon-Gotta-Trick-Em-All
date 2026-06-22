@@ -17,6 +17,7 @@ let lobbyInfo = null;     // {code, started, players:[{name,connected}]}
 let gameState = null;     // latest personalized state from server
 let consolationRuleEnabled = false;
 let fillWithBotsEnabled = false;
+let desiredPlayerCount = 4;
 
 socket.on('joined', ({code, playerId})=>{
   myId = playerId; myRoomCode = code; errorMsg='';
@@ -223,15 +224,29 @@ function renderLobby(){
     botToggleRow.appendChild(h('button', {
       class: fillWithBotsEnabled ? 'gold' : 'secondary',
       onClick: ()=>{ fillWithBotsEnabled = !fillWithBotsEnabled; render(); }
-    }, fillWithBotsEnabled ? `✓ Fill ${seatsOpen} empty seat${seatsOpen>1?'s':''} with bots` : `Fill empty seats with bots: OFF`));
+    }, fillWithBotsEnabled ? `✓ Fill empty seats with bots` : `Fill empty seats with bots: OFF`));
     panel.appendChild(botToggleRow);
+
+    if(fillWithBotsEnabled){
+      const humanCount = lobbyInfo.players.length;
+      panel.appendChild(h('div', {class:'small', style:'margin-top:8px;'}, 'Total players (including you):'));
+      const countRow = h('div', {class:'row', style:'margin-top:6px;'});
+      for(let n = Math.max(2, humanCount); n <= 4; n++){
+        countRow.appendChild(h('button', {
+          class: desiredPlayerCount === n ? 'gold' : 'secondary',
+          onClick: ()=>{ desiredPlayerCount = n; render(); }
+        }, `${n} (${n - humanCount} bot${n - humanCount===1?'':'s'})`));
+      }
+      panel.appendChild(countRow);
+    }
   }
 
   const canStart = lobbyInfo && (lobbyInfo.players.length >= 2 || fillWithBotsEnabled) && !lobbyInfo.started;
+  if(lobbyInfo && desiredPlayerCount < lobbyInfo.players.length) desiredPlayerCount = Math.min(4, lobbyInfo.players.length);
   panel.appendChild(h('div', {class:'row', style:'margin-top:18px;'}, [
     h('button', {class: canStart ? 'gold' : 'secondary', onClick: ()=>{
       if(!canStart) return;
-      socket.emit('startGame', {consolationRule: consolationRuleEnabled, fillWithBots: fillWithBotsEnabled});
+      socket.emit('startGame', {consolationRule: consolationRuleEnabled, fillWithBots: fillWithBotsEnabled, totalPlayers: desiredPlayerCount});
     }}, canStart ? 'Start Game' : 'Waiting for players (need 2+, or fill with bots)...')
   ]));
 
@@ -301,7 +316,10 @@ function renderGameOver(s){
   wrap.appendChild(h('h2', {}, `${winner ? winner.name : 'Someone'} wins the game!`));
   wrap.appendChild(renderScoreboard(s, {sortByScore:true}));
   wrap.appendChild(h('div', {class:'row', style:'margin-top:16px;justify-content:center;'}, [
-    h('button', {class:'gold', onClick: ()=> location.reload() }, 'Back to Home')
+    h('button', {class:'gold', onClick: ()=>{
+      localStorage.removeItem('pkTrickSession');
+      location.reload();
+    }}, 'Back to Home')
   ]));
   return wrap;
 }
