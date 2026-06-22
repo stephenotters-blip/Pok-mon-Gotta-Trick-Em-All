@@ -263,24 +263,27 @@ function renderLobby(){
 }
 
 function renderScoreboard(s, opts={}){
+  const showRoundColumn = opts.showRoundColumn !== false;
   const panel = h('div', {class:'panel'});
   panel.appendChild(h('div', {}, [h('strong',{},'Scoreboard')]));
   const table = h('table', {class:'scoreboard'});
-  table.appendChild(h('tr', {}, [h('th',{},'Player'), h('th',{},'Caught this round'), h('th',{},'Total score'), h('th',{},'Total caught')]));
+  const headerCells = [h('th',{},'Player')];
+  if(showRoundColumn) headerCells.push(h('th',{},'Caught this round'));
+  headerCells.push(h('th',{},'Total score'), h('th',{},'Total caught'));
+  table.appendChild(h('tr', {}, headerCells));
   const playerList = opts.sortByScore
     ? s.players.slice().sort((a,b)=> s.totalScore[b.id] - s.totalScore[a.id])
     : s.players;
   playerList.forEach((p, idx)=>{
-    const caughtRound = s.caughtThisRound[p.id] || [];
-    const roundPts = caughtRound.reduce((sum,k)=> sum + s.pokemonDefsByKey[k].points, 0);
     const rank = opts.sortByScore ? `${idx+1}. ` : '';
-    const row = h('tr', {}, [
-      h('td', {}, rank + p.name + (p.id===s.yourId?' (you)':'')),
-      h('td', {}, [h('div',{},`${roundPts} pt(s)`), (()=>{const r=h('div',{class:'caught-row'}); caughtRound.forEach(k=> r.appendChild(pokemonCardEl(s.pokemonDefsByKey[k], {size:'sm'}))); return r;})()]),
-      h('td', {}, String(s.totalScore[p.id])),
-      h('td', {}, String(s.totalCaught[p.id]))
-    ]);
-    table.appendChild(row);
+    const cells = [h('td', {}, rank + p.name + (p.id===s.yourId?' (you)':''))];
+    if(showRoundColumn){
+      const caughtRound = s.caughtThisRound[p.id] || [];
+      const roundPts = caughtRound.reduce((sum,k)=> sum + s.pokemonDefsByKey[k].points, 0);
+      cells.push(h('td', {}, [h('div',{},`${roundPts} pt(s)`), (()=>{const r=h('div',{class:'caught-row'}); caughtRound.forEach(k=> r.appendChild(pokemonCardEl(s.pokemonDefsByKey[k], {size:'sm'}))); return r;})()]));
+    }
+    cells.push(h('td', {}, String(s.totalScore[p.id])), h('td', {}, String(s.totalCaught[p.id])));
+    table.appendChild(h('tr', {}, cells));
   });
   panel.appendChild(table);
   return panel;
@@ -321,7 +324,7 @@ function renderGameOver(s){
   const winner = contenders[0];
   wrap.appendChild(h('div', {class:'trophy'}, '🏆'));
   wrap.appendChild(h('h2', {}, `${winner ? winner.name : 'Someone'} wins the game!`));
-  wrap.appendChild(renderScoreboard(s, {sortByScore:true}));
+  wrap.appendChild(renderScoreboard(s, {sortByScore:true, showRoundColumn:false}));
   wrap.appendChild(h('div', {class:'row', style:'margin-top:16px;justify-content:center;'}, [
     h('button', {class:'gold', onClick: ()=>{
       socket.emit('rematch', {});
