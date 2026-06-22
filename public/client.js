@@ -112,6 +112,17 @@ let _lastFlippedPokemonKey = null;
 function pokemonCardEl(pk, opts={}){
   const sizeClass = opts.size ? `size-${opts.size}` : '';
   const el = h('div', {class: `pkcard ${sizeClass} ${opts.extraClass||''}`.trim()});
+
+  // Small/medium thumbnails (scoreboard, round summary) never animate — they're
+  // always shown already face-up — so skip the 3D flip structure entirely and
+  // just render the art directly. This avoids relying on aspect-ratio + 3D
+  // transforms together, which some mobile/tablet browsers render unreliably
+  // at small sizes.
+  if(opts.size !== 'lg'){
+    el.appendChild(h('img', {src: imgSrc('pkfinal_'+pk.key), alt: pk.name, class:'pkcard-img'}));
+    return el;
+  }
+
   const flipWrap = h('div', {class:'pkcard-flip'});
   const inner = h('div', {class:'pkcard-flip-inner'});
   const front = h('div', {class:'pkcard-flip-face'});
@@ -122,15 +133,11 @@ function pokemonCardEl(pk, opts={}){
   flipWrap.appendChild(inner);
   el.appendChild(flipWrap);
 
-  if(opts.size === 'lg'){
-    if(pk.key !== _lastFlippedPokemonKey){
-      _lastFlippedPokemonKey = pk.key;
-      el.classList.add('is-flipping');
-      requestAnimationFrame(()=>{ requestAnimationFrame(()=> flipWrap.classList.add('flipped')); });
-      setTimeout(()=> el.classList.remove('is-flipping'), 950);
-    } else {
-      flipWrap.classList.add('flipped');
-    }
+  if(pk.key !== _lastFlippedPokemonKey){
+    _lastFlippedPokemonKey = pk.key;
+    el.classList.add('is-flipping');
+    requestAnimationFrame(()=>{ requestAnimationFrame(()=> flipWrap.classList.add('flipped')); });
+    setTimeout(()=> el.classList.remove('is-flipping'), 950);
   } else {
     flipWrap.classList.add('flipped');
   }
