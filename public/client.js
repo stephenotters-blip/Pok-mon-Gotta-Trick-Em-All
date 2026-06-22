@@ -324,6 +324,9 @@ function renderGameOver(s){
   wrap.appendChild(renderScoreboard(s, {sortByScore:true}));
   wrap.appendChild(h('div', {class:'row', style:'margin-top:16px;justify-content:center;'}, [
     h('button', {class:'gold', onClick: ()=>{
+      socket.emit('rematch', {});
+    }}, '🔁 Rematch (same players)'),
+    h('button', {class:'secondary', onClick: ()=>{
       localStorage.removeItem('pkTrickSession');
       location.reload();
     }}, 'Back to Home')
