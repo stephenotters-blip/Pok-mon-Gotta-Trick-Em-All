@@ -19,6 +19,10 @@ let consolationRuleEnabled = false;
 let fillWithBotsEnabled = false;
 let desiredPlayerCount = 4;
 let showPlayerAid = false;
+let chatMessages = [];
+let chatInput = '';
+let rematchStatus = null; // {votedNames, requiredCount, votedCount}
+let myRematchVote = false;
 
 function helpButtonEl(){
   return h('button', {class:'help-circle', onClick: ()=>{ showPlayerAid = true; render(); }}, '?');
@@ -78,7 +82,15 @@ socket.on('joined', ({code, playerId})=>{
   render();
 });
 socket.on('lobby', (info)=>{ lobbyInfo = info; if(screen!=='game') screen='lobby'; render(); });
-socket.on('state', (s)=>{ gameState = s; screen = 'game'; render(); });
+socket.on('chatHistory', (msgs)=>{ chatMessages = msgs; render(); });
+socket.on('chatMessage', (msg)=>{ chatMessages.push(msg); if(chatMessages.length>100) chatMessages.shift(); render(); });
+socket.on('rematchStatus', (status)=>{ rematchStatus = status; render(); });
+socket.on('state', (s)=>{
+  // A fresh (non-gameOver) state means either the first start or a rematch
+  // actually kicked off — clear any stale rematch UI from the previous game.
+  if(s.phase !== 'gameOver'){ rematchStatus = null; myRematchVote = false; }
+  gameState = s; screen = 'game'; render();
+});
 socket.on('errorMsg', (msg)=>{
   if(msg === 'rejoin-failed'){
     localStorage.removeItem('pkTrickSession');
@@ -212,6 +224,42 @@ function header(){
   ]);
 }
 
+function renderChatPanel(){
+  const panel = h('div', {class:'panel chat-panel'});
+  panel.appendChild(h('div', {}, [h('strong',{},'💬 Chat')]));
+  const list = h('div', {class:'chat-messages'});
+  chatMessages.slice(-50).forEach(m=>{
+    list.appendChild(h('div', {class:'chat-line'}, [
+      h('span', {class:'chat-name'}, m.name + ': '),
+      h('span', {}, m.text)
+    ]));
+  });
+  panel.appendChild(list);
+
+  const inputEl = h('input', {type:'text', placeholder:'Say something...', value: chatInput, style:'flex:1;'});
+  inputEl.addEventListener('input', e=> chatInput = e.target.value);
+  const sendChat = ()=>{
+    const text = inputEl.value.trim();
+    if(!text) return;
+    socket.emit('sendChatMessage', {text});
+    chatInput = '';
+    render();
+    requestAnimationFrame(()=>{
+      const el = document.querySelector('.chat-panel input[type=text]');
+      if(el) el.focus();
+    });
+  };
+  inputEl.addEventListener('keydown', e=>{ if(e.key === 'Enter') sendChat(); });
+  panel.appendChild(h('div', {class:'row', style:'margin-top:8px;'}, [
+    inputEl,
+    h('button', {onClick: sendChat}, 'Send')
+  ]));
+
+  requestAnimationFrame(()=>{ list.scrollTop = list.scrollHeight; });
+
+  return panel;
+}
+
 function renderHome(){
   const wrap = h('div');
   wrap.appendChild(header());
@@ -314,6 +362,7 @@ function renderLobby(){
 
   wrap.appendChild(panel);
   if(errorMsg) wrap.appendChild(h('div', {class:'panel', style:'border:1px solid var(--bad);color:var(--bad);'}, errorMsg));
+  wrap.appendChild(renderChatPanel());
   return wrap;
 }
 
@@ -380,15 +429,33 @@ function renderGameOver(s){
   wrap.appendChild(h('div', {class:'trophy'}, '🏆'));
   wrap.appendChild(h('h2', {}, `${winner ? winner.name : 'Someone'} wins the game!`));
   wrap.appendChild(renderScoreboard(s, {sortByScore:true, showRoundColumn:false}));
-  wrap.appendChild(h('div', {class:'row', style:'margin-top:16px;justify-content:center;'}, [
-    h('button', {class:'gold', onClick: ()=>{
+
+  const rematchBtn = h('button', {
+    class: myRematchVote ? 'secondary' : 'gold',
+    onClick: ()=>{
+      if(myRematchVote) return;
+      myRematchVote = true;
       socket.emit('rematch', {});
-    }}, '🔁 Rematch (same players)'),
+      render();
+    }
+  }, myRematchVote ? '✓ Ready for rematch' : '🔁 Rematch (same players)');
+
+  wrap.appendChild(h('div', {class:'row', style:'margin-top:16px;justify-content:center;'}, [
+    rematchBtn,
     h('button', {class:'secondary', onClick: ()=>{
       localStorage.removeItem('pkTrickSession');
       location.reload();
     }}, 'Back to Home')
   ]));
+
+  if(myRematchVote && rematchStatus){
+    const remaining = rematchStatus.requiredCount - rematchStatus.votedCount;
+    wrap.appendChild(h('div', {class:'small', style:'text-align:center;margin-top:10px;'},
+      remaining > 0
+        ? `Waiting for ${remaining} other player${remaining===1?'':'s'} to be ready... (${rematchStatus.votedNames.join(', ')} ready so far)`
+        : 'Everyone is ready — starting!'
+    ));
+  }
   return wrap;
 }
 
@@ -416,10 +483,12 @@ function renderGame(){
   } else {
     const turnPlayer = s.players.find(p=>p.id===s.turnPlayerId);
     const botThinking = !isMyTurn && turnPlayer && turnPlayer.isBot;
+    const disconnected = !isMyTurn && turnPlayer && turnPlayer.connected === false;
     const waitingOnOther = !isMyTurn && turnPlayer;
     status.appendChild(h('div', {class:'turn-banner' + (isMyTurn?' mine':'') + (botThinking?' thinking':''), style:'margin-top:10px;'},
       isMyTurn ? "It's your turn — play a card!" :
       botThinking ? `${turnPlayer.name} is thinking...` :
+      disconnected ? `${turnPlayer.name} disconnected — a card will auto-play for them if they don't return soon.` :
       waitingOnOther ? `Waiting for ${turnPlayer.name}...` : '...'
     ));
   }
@@ -444,7 +513,7 @@ function renderGame(){
     const slot = h('div', {class:'play-slot'});
     const isWinner = s.awaitingContinue && playRec && pid === s.trick.winnerId;
     slot.appendChild(cardEl(playRec ? playRec.cardKey : null, {extraClass: isWinner ? 'winner-card' : '', flip:true, flipKey: pid}));
-    slot.appendChild(h('div', {class:'pname' + (pid===s.turnPlayerId && !playRec && !s.awaitingContinue ? ' active':'')}, p.name + (pid===s.yourId?' (you)':'')));
+    slot.appendChild(h('div', {class:'pname' + (pid===s.turnPlayerId && !playRec && !s.awaitingContinue ? ' active':'')}, p.name + (pid===s.yourId?' (you)':'') + (p.connected===false?' 💤':'')));
     playsBySlot.appendChild(slot);
   });
   tableArea.appendChild(playsBySlot);
@@ -476,6 +545,8 @@ function renderGame(){
   s.log.slice(-30).reverse().forEach(line => logDiv.appendChild(h('div', {}, line)));
   logPanel.appendChild(logDiv);
   wrap.appendChild(logPanel);
+
+  wrap.appendChild(renderChatPanel());
 
   return wrap;
 }
