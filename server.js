@@ -26,7 +26,7 @@ function makeUniqueRoomCode(){
 
 // Build a per-viewer-safe copy of the state: every player's hand is hidden
 // except the viewer's own (others just get a card count).
-function personalize(state, viewerId){
+function personalize(state, viewerId, roomPlayers){
   const safeHands = {};
   Object.keys(state.hands).forEach(pid=>{
     safeHands[pid] = pid === viewerId ? state.hands[pid] : { count: state.hands[pid].length };
@@ -36,8 +36,12 @@ function personalize(state, viewerId){
     : [];
   const pokemonDefsByKey = {};
   G.POKEMON_DEFS.forEach(d=> pokemonDefsByKey[d.key] = d);
+  const connectedById = {};
+  (roomPlayers||[]).forEach(p=> connectedById[p.id] = !!p.connected || !!p.isBot);
+  const playersWithStatus = state.players.map(p=> ({...p, connected: connectedById[p.id] !== false}));
   return {
     ...state,
+    players: playersWithStatus,
     hands: safeHands,
     yourId: viewerId,
     isYourTurn: G.currentTurnPlayerId(state) === viewerId,
@@ -52,7 +56,7 @@ function broadcastState(room){
   if(!room.state) return;
   room.players.forEach(p=>{
     if(p.socketId){
-      io.to(p.socketId).emit('state', personalize(room.state, p.id));
+      io.to(p.socketId).emit('state', personalize(room.state, p.id, room.players));
     }
   });
 }
@@ -90,14 +94,20 @@ function scheduleAutoRoundContinue(room){
   }, 4500);
 }
 
-// If it's a bot's turn, have it play after a human-like delay.
+// If it's a bot's turn, have it play after a human-like delay. Also covers
+// the disconnect-grace check for human turns, so every call site that
+// already calls this gets both behaviors for free.
 function maybeRunBot(room){
   const s = room.state;
   if(!s || s.phase !== 'playing' || s.awaitingContinue || s.awaitingRoundContinue) return;
-  if(room._pendingBotMove) return;
   const turnId = G.currentTurnPlayerId(s);
   const turnPlayer = s.players.find(p=>p.id===turnId);
-  if(!turnPlayer || !turnPlayer.isBot) return;
+  if(!turnPlayer) return;
+  if(!turnPlayer.isBot){
+    scheduleDisconnectGrace(room);
+    return;
+  }
+  if(room._pendingBotMove) return;
   room._pendingBotMove = true;
   setTimeout(()=>{
     room._pendingBotMove = false;
@@ -108,6 +118,33 @@ function maybeRunBot(room){
     if(room.state.awaitingContinue) scheduleAutoContinue(room);
     else maybeRunBot(room); // chain in case the next seat is also a bot
   }, 1200 + Math.random()*1300);
+}
+
+// Safety net: if it's a disconnected human's turn and they don't reconnect
+// within the grace period, auto-play a reasonable card for them so the game
+// doesn't stall forever for everyone else. Cancelled automatically the next
+// time state changes (a fresh timer is only set if still relevant).
+const DISCONNECT_GRACE_MS = 30000;
+function scheduleDisconnectGrace(room){
+  if(room._disconnectGraceTimer) return;
+  const s = room.state;
+  if(!s || s.phase !== 'playing' || s.awaitingContinue || s.awaitingRoundContinue) return;
+  const turnId = G.currentTurnPlayerId(s);
+  const roomPlayer = room.players.find(p=>p.id===turnId);
+  if(!roomPlayer || roomPlayer.isBot || roomPlayer.connected) return;
+  room._disconnectGraceTimer = setTimeout(()=>{
+    room._disconnectGraceTimer = null;
+    if(!room.state || room.state.phase !== 'playing') return;
+    const stillTurnId = G.currentTurnPlayerId(room.state);
+    const stillPlayer = room.players.find(p=>p.id===stillTurnId);
+    if(!stillPlayer || stillPlayer.isBot || stillPlayer.connected) return; // reconnected or moved on already
+    const cardKey = G.botChooseCard(room.state, stillTurnId);
+    G.applyPlayCard(room.state, stillTurnId, cardKey);
+    room.state.log.push(`${stillPlayer.name} was disconnected too long — a card was auto-played for them.`);
+    broadcastState(room);
+    if(room.state.awaitingContinue) scheduleAutoContinue(room);
+    else maybeRunBot(room);
+  }, DISCONNECT_GRACE_MS);
 }
 
 io.on('connection', (socket)=>{
@@ -135,6 +172,7 @@ io.on('connection', (socket)=>{
     socket.data.roomCode = code;
     socket.data.playerId = player.id;
     socket.emit('joined', { code, playerId: player.id });
+    socket.emit('chatHistory', room.chatLog || []);
     broadcastLobby(room);
   });
 
@@ -142,10 +180,29 @@ io.on('connection', (socket)=>{
     const room = rooms[socket.data.roomCode];
     if(!room || !room.state) return;
     if(room.state.phase !== 'gameOver') return; // only allowed once a game has actually ended
-    // Reuse the exact same seated players (humans + any bots) from the
-    // previous game, just with a freshly shuffled deck/state.
+    const pid = socket.data.playerId;
+
+    room.rematchVotes = room.rematchVotes || new Set();
+    room.rematchVotes.add(pid);
+    room._rematchConsolationRule = consolationRule;
+
+    // Bots always count as ready; only connected humans need to actively vote.
+    const requiredVoterIds = room.players.filter(p=> !p.isBot && p.connected).map(p=>p.id);
+    const votedNames = room.players.filter(p=> room.rematchVotes.has(p.id)).map(p=>p.name);
+    const allReady = requiredVoterIds.every(id => room.rematchVotes.has(id));
+
+    io.to(room.code).emit('rematchStatus', {
+      votedNames,
+      requiredCount: requiredVoterIds.length,
+      votedCount: requiredVoterIds.filter(id=>room.rematchVotes.has(id)).length
+    });
+
+    if(!allReady) return;
+
+    // Everyone's ready — start the new game.
+    room.rematchVotes = new Set();
     const gamePlayers = room.players.map(p=>({id:p.id, name:p.name, isBot:!!p.isBot}));
-    room.state = G.initGameState(gamePlayers, { consolationRule: consolationRule != null ? !!consolationRule : room.state.consolationRule });
+    room.state = G.initGameState(gamePlayers, { consolationRule: room._rematchConsolationRule != null ? !!room._rematchConsolationRule : room.state.consolationRule });
     G.revealNextPokemon(room.state);
     broadcastState(room);
     maybeRunBot(room);
@@ -198,13 +255,15 @@ io.on('connection', (socket)=>{
     if(!player) return socket.emit('errorMsg', 'rejoin-failed');
     player.socketId = socket.id;
     player.connected = true;
+    if(room._disconnectGraceTimer){ clearTimeout(room._disconnectGraceTimer); room._disconnectGraceTimer = null; }
     socket.join(code);
     socket.data.roomCode = code;
     socket.data.playerId = player.id;
     socket.emit('joined', { code, playerId: player.id });
+    socket.emit('chatHistory', room.chatLog || []);
     broadcastLobby(room);
     if(room.state){
-      io.to(socket.id).emit('state', personalize(room.state, player.id));
+      io.to(socket.id).emit('state', personalize(room.state, player.id, room.players));
     }
   });
 
@@ -214,10 +273,41 @@ io.on('connection', (socket)=>{
     const player = room.players.find(p=>p.id === socket.data.playerId);
     if(player) player.connected = false;
     broadcastLobby(room);
+    if(room.state) scheduleDisconnectGrace(room);
+    // If a rematch vote is in progress, recompute in case this drop-out
+    // means everyone remaining is now actually ready.
+    if(room.state && room.state.phase === 'gameOver' && room.rematchVotes){
+      const requiredVoterIds = room.players.filter(p=> !p.isBot && p.connected).map(p=>p.id);
+      const votedNames = room.players.filter(p=> room.rematchVotes.has(p.id)).map(p=>p.name);
+      const votedCount = requiredVoterIds.filter(id=>room.rematchVotes.has(id)).length;
+      io.to(room.code).emit('rematchStatus', { votedNames, requiredCount: requiredVoterIds.length, votedCount });
+      if(requiredVoterIds.length > 0 && votedCount === requiredVoterIds.length){
+        room.rematchVotes = new Set();
+        const gamePlayers = room.players.map(p=>({id:p.id, name:p.name, isBot:!!p.isBot}));
+        room.state = G.initGameState(gamePlayers, { consolationRule: room._rematchConsolationRule != null ? !!room._rematchConsolationRule : room.state.consolationRule });
+        G.revealNextPokemon(room.state);
+        broadcastState(room);
+        maybeRunBot(room);
+      }
+    }
     // Rooms with no game in progress and everyone gone get cleaned up.
     if(!room.started && room.players.every(p=>!p.connected)){
       delete rooms[room.code];
     }
+  });
+
+  socket.on('sendChatMessage', ({text})=>{
+    const room = rooms[socket.data.roomCode];
+    if(!room) return;
+    const player = room.players.find(p=>p.id === socket.data.playerId);
+    if(!player) return;
+    const clean = String(text||'').slice(0, 300).trim();
+    if(!clean) return;
+    const msg = { name: player.name, text: clean, ts: Date.now() };
+    room.chatLog = room.chatLog || [];
+    room.chatLog.push(msg);
+    if(room.chatLog.length > 100) room.chatLog.shift();
+    io.to(room.code).emit('chatMessage', msg);
   });
 
 });
