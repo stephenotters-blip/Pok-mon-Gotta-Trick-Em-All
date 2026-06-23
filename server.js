@@ -10,6 +10,19 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ---- Basic chat profanity filter ----
+// Not exhaustive, but covers common cases. Matches whole words only (so it
+// doesn't mangle innocent words that merely contain a substring), and
+// replaces the match with asterisks rather than rejecting the whole message.
+const BAD_WORDS = [
+  'fuck','shit','bitch','asshole','bastard','cunt','dick','piss','cock',
+  'pussy','slut','whore','fag','retard','nigger','nigga'
+];
+const BAD_WORDS_RE = new RegExp('\\b(' + BAD_WORDS.join('|') + ')\\w*\\b', 'gi');
+function censorText(text){
+  return text.replace(BAD_WORDS_RE, (match)=> match[0] + '*'.repeat(Math.max(1, match.length-1)));
+}
+
 // ---- In-memory room storage ----
 // rooms[code] = {
 //   code, players: [{id, socketId, name, connected}],
@@ -151,7 +164,7 @@ io.on('connection', (socket)=>{
 
   socket.on('createRoom', ({name})=>{
     const code = makeUniqueRoomCode();
-    const player = { id: G.makeId(), socketId: socket.id, name: (name||'Player').slice(0,20), connected:true };
+    const player = { id: G.makeId(), socketId: socket.id, name: censorText((name||'Player').slice(0,20)), connected:true };
     rooms[code] = { code, players:[player], state:null, started:false };
     socket.join(code);
     socket.data.roomCode = code;
@@ -166,7 +179,7 @@ io.on('connection', (socket)=>{
     if(!room) return socket.emit('errorMsg', 'Room not found.');
     if(room.started) return socket.emit('errorMsg', 'That game already started.');
     if(room.players.length >= 4) return socket.emit('errorMsg', 'Room is full (max 4 players).');
-    const player = { id: G.makeId(), socketId: socket.id, name: (name||'Player').slice(0,20), connected:true };
+    const player = { id: G.makeId(), socketId: socket.id, name: censorText((name||'Player').slice(0,20)), connected:true };
     room.players.push(player);
     socket.join(code);
     socket.data.roomCode = code;
@@ -301,8 +314,9 @@ io.on('connection', (socket)=>{
     if(!room) return;
     const player = room.players.find(p=>p.id === socket.data.playerId);
     if(!player) return;
-    const clean = String(text||'').slice(0, 300).trim();
+    let clean = String(text||'').slice(0, 300).trim();
     if(!clean) return;
+    clean = censorText(clean);
     const msg = { name: player.name, text: clean, ts: Date.now() };
     room.chatLog = room.chatLog || [];
     room.chatLog.push(msg);
