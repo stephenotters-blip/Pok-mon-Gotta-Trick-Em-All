@@ -18,6 +18,58 @@ let gameState = null;     // latest personalized state from server
 let consolationRuleEnabled = false;
 let fillWithBotsEnabled = false;
 let desiredPlayerCount = 4;
+let showPlayerAid = false;
+
+function helpButtonEl(){
+  return h('button', {class:'help-circle', onClick: ()=>{ showPlayerAid = true; render(); }}, '?');
+}
+
+function renderPlayerAidModal(){
+  const overlay = h('div', {class:'modal-overlay', onClick: (e)=>{ if(e.target.classList.contains('modal-overlay')){ showPlayerAid=false; render(); } }});
+  const box = h('div', {class:'modal-box'});
+  box.appendChild(h('div', {class:'row', style:'justify-content:space-between;align-items:center;margin-bottom:10px;'}, [
+    h('strong', {style:'font-size:1.1rem;'}, '📖 Player Aid — Quick Reference'),
+    h('button', {class:'secondary', onClick: ()=>{ showPlayerAid=false; render(); }}, 'Close ✕')
+  ]));
+
+  const section = (title, lines)=>{
+    box.appendChild(h('div', {class:'aid-section'}, [
+      h('div', {class:'aid-title'}, title),
+      ...lines.map(l=> h('div', {class:'aid-line'}, l))
+    ]));
+  };
+
+  section('Setup', [
+    '40 Ball Cards (4 suits × 1-10) + 20 Pokémon Cards, shuffled separately.',
+    'Each player is dealt 7 Ball Cards. Remainder forms the draw pile.'
+  ]);
+  section('Each Trick', [
+    '1. Flip the top Pokémon card — note its point value and Wild Suit.',
+    '2. Starting left of the dealer/last winner, each player plays one card.',
+    '3. Follow the Lead Suit if you hold it. A Wild Suit card is always a legal alternative (never mandatory). If you hold neither, any card is legal.'
+  ]);
+  section('Resolving the Trick', [
+    'Wild Suit beats everything — highest Wild Suit card played wins.',
+    'No Wild Suit played? Highest card of the Lead Suit wins.',
+    'Any other suit can never win the trick, regardless of value.'
+  ]);
+  section('After the Trick', [
+    'Winner takes the Pokémon card — it counts toward their score this round.',
+    'Caught Pokémon are removed from the game permanently.',
+    'All players immediately draw back up to 7 cards. Winner leads the next trick.'
+  ]);
+  section('End of Round (after 4 tricks)', [
+    'Total the points of Pokémon you caught this round.',
+    'Highest round total earns a +3 bonus (ties: everyone tied for the top earns it).'
+  ]);
+  section('Winning', [
+    'After 4 rounds (16 tricks), highest total score wins.',
+    'Tiebreaker: most Pokémon caught, then who won the most recent trick.'
+  ]);
+
+  overlay.appendChild(box);
+  return overlay;
+}
 
 socket.on('joined', ({code, playerId})=>{
   myId = playerId; myRoomCode = code; errorMsg='';
@@ -151,9 +203,12 @@ function suitTagEl(suit){
 
 /* ===================== SCREENS ===================== */
 function header(){
-  return h('div', {}, [
-    h('h1', {}, "Pokémon: Gotta Trick 'Em All"),
-    h('div', {class:'subtitle'}, "Online multiplayer — up to 4 players, trick-taking")
+  return h('div', {class:'row', style:'justify-content:space-between;align-items:flex-start;'}, [
+    h('div', {}, [
+      h('h1', {}, "Pokémon: Gotta Trick 'Em All"),
+      h('div', {class:'subtitle'}, "Online multiplayer — up to 4 players, trick-taking")
+    ]),
+    helpButtonEl()
   ]);
 }
 
@@ -432,6 +487,7 @@ function render(){
   if(screen === 'home') app.appendChild(renderHome());
   else if(screen === 'lobby') app.appendChild(renderLobby());
   else if(screen === 'game') app.appendChild(renderGame());
+  if(showPlayerAid) app.appendChild(renderPlayerAidModal());
 }
 
 fetch('/card-data.json').then(r=>r.json()).then(data=>{
