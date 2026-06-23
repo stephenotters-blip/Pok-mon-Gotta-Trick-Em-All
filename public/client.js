@@ -19,13 +19,23 @@ let consolationRuleEnabled = false;
 let fillWithBotsEnabled = false;
 let desiredPlayerCount = 4;
 let showPlayerAid = false;
+let showChat = false;
 let chatMessages = [];
 let chatInput = '';
+let unreadChatCount = 0;
 let rematchStatus = null; // {votedNames, requiredCount, votedCount}
 let myRematchVote = false;
 
 function helpButtonEl(){
   return h('button', {class:'help-circle', onClick: ()=>{ showPlayerAid = true; render(); }}, '?');
+}
+
+function chatButtonEl(){
+  const btn = h('button', {class:'help-circle chat-circle', onClick: ()=>{ showChat = true; unreadChatCount = 0; render(); }}, '💬');
+  if(unreadChatCount > 0){
+    btn.appendChild(h('span', {class:'chat-badge'}, String(Math.min(unreadChatCount, 9))));
+  }
+  return btn;
 }
 
 function renderPlayerAidModal(){
@@ -83,7 +93,12 @@ socket.on('joined', ({code, playerId})=>{
 });
 socket.on('lobby', (info)=>{ lobbyInfo = info; if(screen!=='game') screen='lobby'; render(); });
 socket.on('chatHistory', (msgs)=>{ chatMessages = msgs; render(); });
-socket.on('chatMessage', (msg)=>{ chatMessages.push(msg); if(chatMessages.length>100) chatMessages.shift(); render(); });
+socket.on('chatMessage', (msg)=>{
+  chatMessages.push(msg);
+  if(chatMessages.length>100) chatMessages.shift();
+  if(!showChat) unreadChatCount++;
+  render();
+});
 socket.on('rematchStatus', (status)=>{ rematchStatus = status; render(); });
 socket.on('state', (s)=>{
   // A fresh (non-gameOver) state means either the first start or a rematch
@@ -220,13 +235,18 @@ function header(){
       h('h1', {}, "Pokémon: Gotta Trick 'Em All"),
       h('div', {class:'subtitle'}, "Online multiplayer — up to 4 players, trick-taking")
     ]),
-    helpButtonEl()
+    h('div', {class:'row', style:'gap:8px;'}, [chatButtonEl(), helpButtonEl()])
   ]);
 }
 
-function renderChatPanel(){
-  const panel = h('div', {class:'panel chat-panel'});
-  panel.appendChild(h('div', {}, [h('strong',{},'💬 Chat')]));
+function renderChatModal(){
+  const overlay = h('div', {class:'modal-overlay', onClick: (e)=>{ if(e.target.classList.contains('modal-overlay')){ showChat=false; render(); } }});
+  const box = h('div', {class:'modal-box chat-modal-box'});
+  box.appendChild(h('div', {class:'row', style:'justify-content:space-between;align-items:center;margin-bottom:10px;'}, [
+    h('strong', {style:'font-size:1.1rem;'}, '💬 Chat'),
+    h('button', {class:'secondary', onClick: ()=>{ showChat=false; render(); }}, 'Close ✕')
+  ]));
+
   const list = h('div', {class:'chat-messages'});
   chatMessages.slice(-50).forEach(m=>{
     list.appendChild(h('div', {class:'chat-line'}, [
@@ -234,7 +254,8 @@ function renderChatPanel(){
       h('span', {}, m.text)
     ]));
   });
-  panel.appendChild(list);
+  if(chatMessages.length === 0) list.appendChild(h('div', {class:'small'}, 'No messages yet — say hi!'));
+  box.appendChild(list);
 
   const inputEl = h('input', {type:'text', placeholder:'Say something...', value: chatInput, style:'flex:1;'});
   inputEl.addEventListener('input', e=> chatInput = e.target.value);
@@ -245,19 +266,24 @@ function renderChatPanel(){
     chatInput = '';
     render();
     requestAnimationFrame(()=>{
-      const el = document.querySelector('.chat-panel input[type=text]');
+      const el = document.querySelector('.chat-modal-box input[type=text]');
       if(el) el.focus();
     });
   };
   inputEl.addEventListener('keydown', e=>{ if(e.key === 'Enter') sendChat(); });
-  panel.appendChild(h('div', {class:'row', style:'margin-top:8px;'}, [
+  box.appendChild(h('div', {class:'row', style:'margin-top:8px;'}, [
     inputEl,
     h('button', {onClick: sendChat}, 'Send')
   ]));
 
-  requestAnimationFrame(()=>{ list.scrollTop = list.scrollHeight; });
+  requestAnimationFrame(()=>{
+    list.scrollTop = list.scrollHeight;
+    const el = document.querySelector('.chat-modal-box input[type=text]');
+    if(el) el.focus();
+  });
 
-  return panel;
+  overlay.appendChild(box);
+  return overlay;
 }
 
 function renderHome(){
@@ -362,7 +388,6 @@ function renderLobby(){
 
   wrap.appendChild(panel);
   if(errorMsg) wrap.appendChild(h('div', {class:'panel', style:'border:1px solid var(--bad);color:var(--bad);'}, errorMsg));
-  wrap.appendChild(renderChatPanel());
   return wrap;
 }
 
@@ -546,7 +571,6 @@ function renderGame(){
   logPanel.appendChild(logDiv);
   wrap.appendChild(logPanel);
 
-  wrap.appendChild(renderChatPanel());
 
   return wrap;
 }
@@ -559,6 +583,7 @@ function render(){
   else if(screen === 'lobby') app.appendChild(renderLobby());
   else if(screen === 'game') app.appendChild(renderGame());
   if(showPlayerAid) app.appendChild(renderPlayerAidModal());
+  if(showChat) app.appendChild(renderChatModal());
 }
 
 fetch('/card-data.json').then(r=>r.json()).then(data=>{
