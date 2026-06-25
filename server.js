@@ -189,7 +189,7 @@ io.on('connection', (socket)=>{
     broadcastLobby(room);
   });
 
-  socket.on('rematch', ({consolationRule})=>{
+  socket.on('rematch', ({consolationRule, bonusRule})=>{
     const room = rooms[socket.data.roomCode];
     if(!room || !room.state) return;
     if(room.state.phase !== 'gameOver') return; // only allowed once a game has actually ended
@@ -198,6 +198,7 @@ io.on('connection', (socket)=>{
     room.rematchVotes = room.rematchVotes || new Set();
     room.rematchVotes.add(pid);
     room._rematchConsolationRule = consolationRule;
+    room._rematchBonusRule = bonusRule;
 
     // Bots always count as ready; only connected humans need to actively vote.
     const requiredVoterIds = room.players.filter(p=> !p.isBot && p.connected).map(p=>p.id);
@@ -215,13 +216,16 @@ io.on('connection', (socket)=>{
     // Everyone's ready — start the new game.
     room.rematchVotes = new Set();
     const gamePlayers = room.players.map(p=>({id:p.id, name:p.name, isBot:!!p.isBot}));
-    room.state = G.initGameState(gamePlayers, { consolationRule: room._rematchConsolationRule != null ? !!room._rematchConsolationRule : room.state.consolationRule });
+    room.state = G.initGameState(gamePlayers, {
+      consolationRule: room._rematchConsolationRule != null ? !!room._rematchConsolationRule : room.state.consolationRule,
+      bonusRule: room._rematchBonusRule != null ? !!room._rematchBonusRule : room.state.bonusRule
+    });
     G.revealNextPokemon(room.state);
     broadcastState(room);
     maybeRunBot(room);
   });
 
-  socket.on('startGame', ({consolationRule, fillWithBots, totalPlayers})=>{
+  socket.on('startGame', ({consolationRule, bonusRule, fillWithBots, totalPlayers})=>{
     const room = rooms[socket.data.roomCode];
     if(!room || room.started) return;
     if(room.players.length < 2 && !fillWithBots) return socket.emit('errorMsg', 'Need at least 2 players to start (or fill empty seats with bots).');
@@ -237,7 +241,7 @@ io.on('connection', (socket)=>{
         room.players.push({id, socketId:null, name: botNames[n-1], connected:true, isBot:true});
       }
     }
-    room.state = G.initGameState(gamePlayers, { consolationRule: !!consolationRule });
+    room.state = G.initGameState(gamePlayers, { consolationRule: !!consolationRule, bonusRule: bonusRule !== false });
     G.revealNextPokemon(room.state);
     broadcastLobby(room);
     broadcastState(room);
@@ -297,7 +301,10 @@ io.on('connection', (socket)=>{
       if(requiredVoterIds.length > 0 && votedCount === requiredVoterIds.length){
         room.rematchVotes = new Set();
         const gamePlayers = room.players.map(p=>({id:p.id, name:p.name, isBot:!!p.isBot}));
-        room.state = G.initGameState(gamePlayers, { consolationRule: room._rematchConsolationRule != null ? !!room._rematchConsolationRule : room.state.consolationRule });
+        room.state = G.initGameState(gamePlayers, {
+          consolationRule: room._rematchConsolationRule != null ? !!room._rematchConsolationRule : room.state.consolationRule,
+          bonusRule: room._rematchBonusRule != null ? !!room._rematchBonusRule : room.state.bonusRule
+        });
         G.revealNextPokemon(room.state);
         broadcastState(room);
         maybeRunBot(room);

@@ -75,6 +75,7 @@ function initGameState(players, opts={}){
     log: [`Game started with ${players.length} players.`],
     lastTrickWinner: null,
     consolationRule: !!opts.consolationRule,
+    bonusRule: opts.bonusRule !== false, // default ON to match existing behavior
     version: 0
   };
 }
@@ -201,7 +202,7 @@ function endRoundScoring(s){
   });
   const maxPts = Math.max(...Object.values(roundPoints));
   breakdown.forEach(b=>{
-    if(roundPoints[b.playerId] === maxPts && maxPts > 0){
+    if(s.bonusRule && roundPoints[b.playerId] === maxPts && maxPts > 0){
       b.bonus = true;
       s.totalScore[b.playerId] += b.points + 3;
     } else {
