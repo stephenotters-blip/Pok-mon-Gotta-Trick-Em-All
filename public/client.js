@@ -16,6 +16,7 @@ let myRoomCode = null;
 let lobbyInfo = null;     // {code, started, players:[{name,connected}]}
 let gameState = null;     // latest personalized state from server
 let consolationRuleEnabled = false;
+let bonusRuleEnabled = true;
 let fillWithBotsEnabled = false;
 let desiredPlayerCount = 4;
 let showPlayerAid = false;
@@ -354,6 +355,14 @@ function renderLobby(){
   panel.appendChild(toggleRow);
   panel.appendChild(h('div', {class:'small', style:'margin-top:6px;'}, "If a player wins zero tricks in a round, they score the highest card value in their hand instead of 0."));
 
+  const bonusToggleRow = h('div', {class:'row', style:'margin-top:10px;'});
+  bonusToggleRow.appendChild(h('button', {
+    class: bonusRuleEnabled ? 'gold' : 'secondary',
+    onClick: ()=>{ bonusRuleEnabled = !bonusRuleEnabled; render(); }
+  }, bonusRuleEnabled ? '✓ Round bonus: ON' : 'Round bonus: OFF'));
+  panel.appendChild(bonusToggleRow);
+  panel.appendChild(h('div', {class:'small', style:'margin-top:6px;'}, "The player with the most points in a round earns a +3 bonus (ties: everyone tied for the top earns it)."));
+
   const seatsOpen = lobbyInfo ? 4 - lobbyInfo.players.length : 3;
   if(seatsOpen > 0){
     const botToggleRow = h('div', {class:'row', style:'margin-top:10px;'});
@@ -382,7 +391,7 @@ function renderLobby(){
   panel.appendChild(h('div', {class:'row', style:'margin-top:18px;'}, [
     h('button', {class: canStart ? 'gold' : 'secondary', onClick: ()=>{
       if(!canStart) return;
-      socket.emit('startGame', {consolationRule: consolationRuleEnabled, fillWithBots: fillWithBotsEnabled, totalPlayers: desiredPlayerCount});
+      socket.emit('startGame', {consolationRule: consolationRuleEnabled, bonusRule: bonusRuleEnabled, fillWithBots: fillWithBotsEnabled, totalPlayers: desiredPlayerCount});
     }}, canStart ? 'Start Game' : 'Waiting for players (need 2+, or fill with bots)...')
   ]));
 
